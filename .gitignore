@@ -1,7 +1,7 @@
-__pycache__/
+# 工作区缓存与产物
 .geo-cache/
-.DS_Store
-*.pyc
-board.json
 intake/
-rev/
+geo-run*/
+*.log
+__pycache__/
+*.pyc
