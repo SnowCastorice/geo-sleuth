@@ -52,7 +52,16 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, str(Path(__file__).parent))
 import geo  # noqa: E402
 
-MODELS = {"dino": "facebook/dinov2-small", "clip": "openai/clip-vit-base-patch32"}
+# Shared model store (~/.workbuddy/models) + offline by default, same reasoning as sat_scan.py;
+# if models.py is ever removed, fall back to the hub ids.
+try:
+    import models as _models  # noqa: E402
+
+    _models.enforce_offline()
+    MODELS = {"dino": _models.resolve("dinov2-small", "facebook/dinov2-small"),
+              "clip": _models.resolve("clip-vit-base-patch32", "openai/clip-vit-base-patch32")}
+except Exception:  # noqa: BLE001
+    MODELS = {"dino": "facebook/dinov2-small", "clip": "openai/clip-vit-base-patch32"}
 
 
 def _proxy_env(proxy: str | None) -> None:

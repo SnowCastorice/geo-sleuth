@@ -41,7 +41,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 import geo  # noqa: E402
 import tiles  # noqa: E402
 
-CLIP_ID = "openai/clip-vit-base-patch32"
+# Shared model store (~/.workbuddy/models) + offline by default: a missing model fails loudly instead of
+# silently downloading hundreds of megabytes. If models.py is ever removed, fall back to the hub id.
+try:
+    import models as _models  # noqa: E402
+
+    _models.enforce_offline()
+    CLIP_ID = _models.resolve("clip-vit-base-patch32", "openai/clip-vit-base-patch32")
+except Exception:  # noqa: BLE001
+    CLIP_ID = "openai/clip-vit-base-patch32"
 NEG_COMMON = ["a satellite image of residential buildings and streets", "a satellite image of a road intersection",
               "a satellite image of farmland", "a satellite image of a river", "a satellite image of a parking lot",
               "a satellite image of forest", "a satellite image of a highway", "a satellite image of bare ground"]
@@ -70,13 +78,14 @@ def _proxy_env(proxy: str | None) -> None:
 
 def cell_image(lat: float, lon: float, zoom: int, size: int, source: str, proxy: str | None, cache: Path) -> Image.Image:
     """Stitch a size×size satellite image centered on (lat, lon) (reuses the tile cache)."""
-    gx, gy = geo.ll2px(zoom, lat, lon)
+    tlat, tlon = tiles._to_tile_crs(tiles.SOURCES[source].get("crs", "wgs"), lat, lon)
+    gx, gy = geo.ll2px(zoom, tlat, tlon)
     x0, y0 = gx - size / 2, gy - size / 2
     tile = Image.new("RGB", (size, size), "gray")
     for tx in range(int(x0 // 256), int((x0 + size) // 256) + 1):
         for ty in range(int(y0 // 256), int((y0 + size) // 256) + 1):
             p = cache / f"{source}_{zoom}_{tx}_{ty}.jpg"
-            if tiles._get(tiles.SOURCES[source].format(x=tx, y=ty, z=zoom), p, proxy):
+            if tiles._get(tiles._tile_url(source, tx, ty, zoom), p, proxy):
                 try:
                     tile.paste(Image.open(p), (int(tx * 256 - x0), int(ty * 256 - y0)))
                 except Exception:  # noqa: BLE001
@@ -85,16 +94,17 @@ def cell_image(lat: float, lon: float, zoom: int, size: int, source: str, proxy:
 
 
 def prefetch(points: dict, zoom: int, size: int, source: str, proxy: str | None, cache: Path) -> None:
+    crs = tiles.SOURCES[source].get("crs", "wgs")
     need = set()
     for lat, lon in points.values():
-        gx, gy = geo.ll2px(zoom, lat, lon)
+        gx, gy = geo.ll2px(zoom, *tiles._to_tile_crs(crs, lat, lon))
         x0, y0 = gx - size / 2, gy - size / 2
         for tx in range(int(x0 // 256), int((x0 + size) // 256) + 1):
             for ty in range(int(y0 // 256), int((y0 + size) // 256) + 1):
                 need.add((tx, ty))
     cache.mkdir(parents=True, exist_ok=True)
     with ThreadPoolExecutor(16) as ex:
-        list(ex.map(lambda t: tiles._get(tiles.SOURCES[source].format(x=t[0], y=t[1], z=zoom), cache / f"{source}_{zoom}_{t[0]}_{t[1]}.jpg", proxy), need))
+        list(ex.map(lambda t: tiles._get(tiles._tile_url(source, t[0], t[1], zoom), cache / f"{source}_{zoom}_{t[0]}_{t[1]}.jpg", proxy), need))
 
 
 CLIPN = ([0.48145466, 0.4578275, 0.40821073], [0.26862954, 0.26130258, 0.27577711])

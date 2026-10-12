@@ -5,19 +5,34 @@
 # ///
 """Download satellite tiles, stitch them into one large image (mosaic), and mark points on it.
 
-A .json with the same name is written next to the mosaic (zoom level, top-left tile index, center point);
+A .json with the same name is written next to the mosaic (zoom level, top-left tile index, center point, datum);
 evidence.py and the mark subcommand use it to convert lat/lon to image pixels.
 
-Google satellite imagery is the default (WGS84, the same coordinate system as GPS, no offset correction needed in China).
+Imagery sources (--source):
+  google    Google satellite, WGS84, globally consistent, no offset correction (needs a proxy in China); z18 cap
+  esri      Esri World Imagery, WGS84, usually reachable without a proxy; z19 cap
+  amap      AMap (Gaode) satellite, GCJ-02 — the script corrects the offset internally, the API stays WGS84
+  tianditu  Tianditu imagery (national platform, the only licence-free Chinese source); needs a key
+
+Chinese civilian imagery is capped at zoom 18 (about 0.6 m/px); z19 exists only for foreign cities. Anything finer
+means buying raw scenes (Jilin-1 0.5 m monthly mosaic, GEOVIS Earth "Daily" imagery ~24 h after overpass).
+
+Tianditu key: pass --tk or set GEO_TIANDITU_KEY (free key at https://console.tianditu.gov.cn/api/key).
 
 Examples:
   tiles.py fetch 22.6050,114.0540 --zoom 18 --radius 4 --out area.jpg
+  tiles.py fetch 34.2615,108.9428 --zoom 18 --radius 4 --source amap --out amap.jpg
+  tiles.py fetch 34.2615,108.9428 --zoom 18 --radius 4 --source tianditu --tk <key> --out tdt.jpg
   tiles.py mark area.jpg --points panos.json --out area_panos.jpg --label
   tiles.py mark area.jpg --points cands.json --geojson power.geojson --geojson rail.geojson \
            --sector 22.6045,114.0520,265,40,3000 --out area_lines.jpg       # overlay line features + camera-position view sector
   tiles.py sheet --points cands.json --zoom 18 --out cands_sheet.jpg     # one centered thumbnail per candidate point, numbered
+  tiles.py sheet --points cands.json --zoom 18 --source amap --out cands_amap.jpg   # same sheet from another source
   tiles.py px2ll area.jpg --px 812,440 --px 300,95                      # mosaic pixels → lat/lon (for a cropped image add --crop x0,y0 --scale s)
   tiles.py sheet --grid <s,w,n,e> --zoom 17 --size 320 --cols 5 --out town.jpg   # tile a whole urban area with a grid and look cell by cell (find running tracks, factory buildings)
+
+Cross-checking two sources: fetch the same place from both, mark the same points on each — the markers must land on
+the same building. If they do not, the datum was handled wrong somewhere.
 """
 from __future__ import annotations
 
@@ -37,9 +52,68 @@ sys.path.insert(0, str(Path(__file__).parent))
 import geo  # noqa: E402
 
 SOURCES = {
-    "google": "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-    "esri": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    "google": {
+        "url": "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+        "crs": "wgs", "max_zoom": 21,
+    },
+    "esri": {
+        "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "crs": "wgs", "max_zoom": 19,
+    },
+    # AMap tiles are cut on GCJ-02 lat/lon: the target point must be shifted to GCJ-02 before computing tile
+    # indices, or the whole mosaic lands 300-600 m away (about 460 m in Xi'an, measured).
+    "amap": {
+        "url": "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}",
+        "subdomains": "1234",
+        "crs": "gcj", "max_zoom": 18,
+    },
+    # Tianditu imagery, spherical-mercator matrix set "w" (same tiling scheme as Google), key required
+    "tianditu": {
+        "url": ("https://t{s}.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
+                "&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles"
+                "&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk={tk}"),
+        "subdomains": "01234567",
+        "crs": "wgs", "max_zoom": 18, "needs_tk": True,
+    },
 }
+
+
+def _tile_url(source: str, x: int, y: int, z: int, tk: str | None = None) -> str:
+    """Build a tile URL from the source metadata (subdomain rotation, key substitution)."""
+    src = SOURCES[source]
+    url = src["url"]
+    subs = src.get("subdomains")
+    if subs:
+        url = url.replace("{s}", subs[(x + y) % len(subs)])
+    if "{tk}" in url:
+        if not tk:
+            raise SystemExit(
+                f"{source} needs a Tianditu key: pass --tk <key> or set GEO_TIANDITU_KEY.\n"
+                f"Free key: https://console.tianditu.gov.cn/api/key"
+            )
+        url = url.replace("{tk}", tk)
+    return url.replace("{x}", str(x)).replace("{y}", str(y)).replace("{z}", str(z))
+
+
+def _to_tile_crs(crs: str, lat: float, lon: float) -> tuple[float, float]:
+    """WGS84 → the imagery source's own datum (only GCJ-02 sources such as AMap need the shift)."""
+    if crs == "gcj":
+        return geo.convert(lat, lon, "wgs", "gcj")
+    return lat, lon
+
+
+def _from_tile_crs(crs: str, lat: float, lon: float) -> tuple[float, float]:
+    """Imagery datum → WGS84, so px2ll always reports WGS84 whatever the source."""
+    if crs == "gcj":
+        return geo.convert(lat, lon, "gcj", "wgs")
+    return lat, lon
+
+
+def warn_zoom(source: str, zoom: int) -> None:
+    top = SOURCES[source].get("max_zoom")
+    if top and zoom > top:
+        print(f"note: {source} tops out at zoom {top}; zoom {zoom} is likely to come back empty "
+              f"(Chinese civilian imagery stops at 18)", file=sys.stderr)
 
 
 def _get(url: str, path: Path, proxy: str | None) -> bool:
@@ -52,9 +126,11 @@ def _get(url: str, path: Path, proxy: str | None) -> bool:
 
 
 def fetch(center: tuple[float, float], zoom: int, radius: int, out: Path, source: str,
-          proxy: str | None, cache: Path) -> dict:
+          proxy: str | None, cache: Path, tk: str | None = None) -> dict:
     cache.mkdir(parents=True, exist_ok=True)
-    gx, gy = geo.ll2px(zoom, *center)
+    crs = SOURCES[source].get("crs", "wgs")
+    clat, clon = _to_tile_crs(crs, *center)      # GCJ-02 sources: shift the center first, or the mosaic is off by ~460 m
+    gx, gy = geo.ll2px(zoom, clat, clon)
     cx, cy = int(gx // 256), int(gy // 256)
     xs = range(cx - radius, cx + radius + 1)
     ys = range(cy - radius, cy + radius + 1)
@@ -63,7 +139,7 @@ def fetch(center: tuple[float, float], zoom: int, radius: int, out: Path, source
     def job(t):
         x, y = t
         p = cache / f"{source}_{zoom}_{x}_{y}.jpg"
-        ok = _get(SOURCES[source].format(x=x, y=y, z=zoom), p, proxy)
+        ok = _get(_tile_url(source, x, y, zoom, tk), p, proxy)
         return t, p, ok
 
     img = Image.new("RGB", (256 * len(xs), 256 * len(ys)), "black")
@@ -78,26 +154,36 @@ def fetch(center: tuple[float, float], zoom: int, radius: int, out: Path, source
             except Exception:
                 failed += 1
     img.save(out, quality=90)
+    if failed == len(jobs):
+        print(f"all {failed} tiles failed: check network/proxy, or that this source has tiles at this zoom "
+              f"({source} caps at z{SOURCES[source].get('max_zoom')})", file=sys.stderr)
+    elif failed:
+        print(f"{failed}/{len(jobs)} tiles failed (left as black blocks)", file=sys.stderr)
     meta = {"zoom": zoom, "origin_tile": [xs[0], ys[0]], "center": list(center), "source": source,
-            "size": list(img.size), "m_per_px": geo.meters_per_px(zoom, center[0]), "failed_tiles": failed}
+            "crs": crs, "size": list(img.size), "m_per_px": geo.meters_per_px(zoom, center[0]),
+            "failed_tiles": failed}
     out.with_suffix(".json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
 
 
 class Mosaic:
-    """lat/lon ↔ mosaic pixels."""
+    """lat/lon ↔ mosaic pixels. The API is always WGS84: GCJ-02 sources are converted internally,
+    and the "crs" field in the .json records which datum the mosaic was cut on."""
 
     def __init__(self, image: Path):
         self.meta = json.loads(Path(image).with_suffix(".json").read_text(encoding="utf-8"))
         self.z = self.meta["zoom"]
         self.ox, self.oy = self.meta["origin_tile"]
+        self.crs = self.meta.get("crs", "wgs")
 
     def to_px(self, lat: float, lon: float) -> tuple[float, float]:
-        x, y = geo.ll2px(self.z, lat, lon)
+        tlat, tlon = _to_tile_crs(self.crs, lat, lon)
+        x, y = geo.ll2px(self.z, tlat, tlon)
         return x - self.ox * 256, y - self.oy * 256
 
     def to_ll(self, x: float, y: float) -> tuple[float, float]:
-        return geo.px2ll(self.z, x + self.ox * 256, y + self.oy * 256)
+        lat, lon = geo.px2ll(self.z, x + self.ox * 256, y + self.oy * 256)
+        return _from_tile_crs(self.crs, lat, lon)
 
 
 PALETTE = ["yellow", "cyan", "magenta", "lime", "orange", "white", "red", "deepskyblue"]
@@ -185,9 +271,11 @@ def grid_points(bbox: str, zoom: int, size: int, step: float | None) -> dict:
     return pts
 
 
-def sheet(points: dict, zoom: int, size: int, cols: int, out: Path, source: str, proxy: str | None, cache: Path) -> list[Path]:
+def sheet(points: dict, zoom: int, size: int, cols: int, out: Path, source: str, proxy: str | None,
+          cache: Path, tk: str | None = None) -> list[Path]:
     """One size×size satellite thumbnail centered on each candidate point, with number and name, laid out on one page (more pages automatically when there are too many)."""
     cache.mkdir(parents=True, exist_ok=True)
+    crs = SOURCES[source].get("crs", "wgs")
     items = list(points.items())
     per = cols * cols
     pages = []
@@ -197,13 +285,14 @@ def sheet(points: dict, zoom: int, size: int, cols: int, out: Path, source: str,
         S = Image.new("RGB", (cols * size, rows * size), "black")
         dr = ImageDraw.Draw(S)
         for k, (name, ll) in enumerate(chunk):
-            gx, gy = geo.ll2px(zoom, ll[0], ll[1])
+            tlat, tlon = _to_tile_crs(crs, ll[0], ll[1])     # GCJ-02 source: shift the point before locating tiles
+            gx, gy = geo.ll2px(zoom, tlat, tlon)
             x0, y0 = gx - size / 2, gy - size / 2
             tile = Image.new("RGB", (size, size), "gray")
             for tx in range(int(x0 // 256), int((x0 + size) // 256) + 1):
                 for ty in range(int(y0 // 256), int((y0 + size) // 256) + 1):
                     p = cache / f"{source}_{zoom}_{tx}_{ty}.jpg"
-                    if _get(SOURCES[source].format(x=tx, y=ty, z=zoom), p, proxy):
+                    if _get(_tile_url(source, tx, ty, zoom, tk), p, proxy):
                         try:
                             tile.paste(Image.open(p), (int(tx * 256 - x0), int(ty * 256 - y0)))
                         except Exception:  # noqa: BLE001
@@ -236,7 +325,8 @@ def main() -> None:
     f.add_argument("--zoom", type=int, default=18, help="17≈1.1m/px for an area, 19≈0.28m/px for a single building")
     f.add_argument("--radius", type=int, default=4, help="rings of tiles around the center tile, 4 → 9x9 tiles")
     f.add_argument("--out", type=Path, required=True)
-    f.add_argument("--source", choices=list(SOURCES), default="google")
+    f.add_argument("--source", choices=list(SOURCES), default="google", help="imagery source: google/esri/amap/tianditu")
+    f.add_argument("--tk", default=os.environ.get("GEO_TIANDITU_KEY"), help="Tianditu key; defaults to GEO_TIANDITU_KEY")
     f.add_argument("--proxy", default=os.environ.get("GEO_PROXY"), help=PROXY_HELP)
     f.add_argument("--cache", type=Path, default=Path(".geo-cache/tiles"))
 
@@ -257,7 +347,8 @@ def main() -> None:
     sh.add_argument("--size", type=int, default=320, help="pixels per cell")
     sh.add_argument("--cols", type=int, default=4, help="cols×cols cells per page")
     sh.add_argument("--out", type=Path, required=True)
-    sh.add_argument("--source", choices=list(SOURCES), default="google")
+    sh.add_argument("--source", choices=list(SOURCES), default="google", help="imagery source: google/esri/amap/tianditu")
+    sh.add_argument("--tk", default=os.environ.get("GEO_TIANDITU_KEY"), help="Tianditu key; defaults to GEO_TIANDITU_KEY")
     sh.add_argument("--proxy", default=os.environ.get("GEO_PROXY"), help=PROXY_HELP)
     sh.add_argument("--cache", type=Path, default=Path(".geo-cache/tiles"))
 
@@ -283,16 +374,18 @@ def main() -> None:
             print(f"-> {args.out}")
         return
     if args.cmd == "sheet":
+        warn_zoom(args.source, args.zoom)
         pts = json.loads(args.points.read_text(encoding="utf-8")) if args.points else grid_points(args.grid, args.zoom, args.size, args.step)
         if args.grid:
             args.out.with_suffix(".cells.json").write_text(json.dumps(pts, indent=1), encoding="utf-8")
             print(f"grid: {len(pts)} cells (cell name r<row>c<col>, rows north to south, columns west to east; cell center coordinates -> {args.out.with_suffix('.cells.json')})")
-        for p in sheet(pts, args.zoom, args.size, args.cols, args.out, args.source, args.proxy, args.cache):
+        for p in sheet(pts, args.zoom, args.size, args.cols, args.out, args.source, args.proxy, args.cache, args.tk):
             print(p)
         return
     if args.cmd == "fetch":
         lat, lon = map(float, args.center.split(","))
-        meta = fetch((lat, lon), args.zoom, args.radius, args.out, args.source, args.proxy, args.cache)
+        warn_zoom(args.source, args.zoom)
+        meta = fetch((lat, lon), args.zoom, args.radius, args.out, args.source, args.proxy, args.cache, args.tk)
         print(json.dumps(meta))
     elif args.cmd == "mark":
         if not (args.points or args.geojson or args.sector):
