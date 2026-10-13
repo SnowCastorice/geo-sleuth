@@ -1,105 +1,258 @@
-from PIL import Image, ImageDraw, ImageFont
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["pillow"]
+# ///
+"""Render the conclusion card: one self-contained image carrying the answer, the coordinates,
+the evidence chain and the confidence line.
 
-FT = "C:/Windows/Fonts/msyh.ttc"
-FTB = "C:/Windows/Fonts/msyhbd.ttc"
-W = 1600
+The card is what you hand the user, so build it in the language the answer is written in and
+show it together with the answer.
+
+Usage:
+  conclusion.py spec.json --out conclusion.jpg
+
+spec.json — only "title" is required, everything else is optional:
+{
+  "title":      "Where this photo was taken",
+  "subtitle":   "Xi'an Bell Tower · camera on the north-west side, facing south-east",
+  "answer":     "One-sentence conclusion, shown in a highlighted box.",
+  "facts":      ["Key fact, one per line", "..."],
+  "photo":      "annotated_photo.jpg",      # left panel
+  "photo_caption": "What that panel shows",
+  "map":        "map_annotated.jpg",        # right panel
+  "map_caption": "...",
+  "chain": [                                # evidence chain, in investigation order
+    {"text": "clue → inference → command that ran → file it produced", "image": "card/step1.jpg"}
+  ],
+  "coords":     [{"label": "WGS84", "value": "34.26204, 108.94216"}],
+  "confidence": [{"level": "City", "grade": "high", "why": "unique anchor"}],
+  "footer":     "Anything the reader must know before trusting the number.",
+  "width":      1200,
+  "lang":       "zh"
+}
+
+Chain thumbnails are drawn at most 230×140 px and the text column narrows by the thumbnail
+width, so keep one short line per item. A thumbnail must be a real artefact of the step it sits
+next to — a decorative stand-in is fabrication; leave "image" out instead.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageDraw
+
+sys.path.insert(0, str(Path(__file__).parent))
+from baidu_pano import _font  # noqa: E402  CJK-capable font lookup, honours GEO_FONT
+
 BG = (255, 255, 255)
-INK = (25, 28, 33)
-GREY = (95, 102, 112)
-ACC = (176, 32, 32)
+INK = (28, 32, 38)
+MUTED = (108, 114, 124)
+ACCENT = (168, 32, 32)
+RULE = (223, 227, 233)
+BOX = (243, 245, 248)
+THUMB = (230, 140)
 
-def font(sz, bold=False):
-    try:
-        return ImageFont.truetype(FTB if bold else FT, sz)
-    except Exception:
-        return ImageFont.load_default()
+LABELS = {
+    "en": {"facts": "Key facts", "chain": "Evidence chain", "coords": "Coordinates",
+           "confidence": "Confidence", "answer": "Conclusion"},
+    "zh": {"facts": "关键事实", "chain": "证据链", "coords": "坐标", "confidence": "置信度",
+           "answer": "结论"},
+}
 
-F_TITLE = font(52, True)
-F_SUB = font(28)
-F_H = font(34, True)
-F_B = font(27)
-F_S = font(23)
-F_MONO = font(27, True)
 
-def wrap(draw, text, f, maxw):
+def wrap(draw: ImageDraw.ImageDraw, text: str, font, maxw: float) -> list[str]:
     lines, cur = [], ""
     for ch in text:
-        if draw.textlength(cur + ch, font=f) > maxw:
-            lines.append(cur); cur = ch
+        if draw.textlength(cur + ch, font=font) > maxw and cur:
+            lines.append(cur)
+            cur = ch
         else:
             cur += ch
     lines.append(cur)
     return lines
 
-# ---- 上部：标题 ----
-head_h = 190
-canvas = Image.new("RGB", (W, head_h), BG)
-d = ImageDraw.Draw(canvas)
-d.rectangle([0, 0, W, 10], fill=ACC)
-d.text((48, 42), "拍摄位置判定：西安钟楼 · 西北侧广场", font=F_TITLE, fill=INK)
-d.text((50, 122), "西安钟楼夜景 · iQOO 15 · 2026-09-19 19:22 · 判定：机位在钟楼西北约 85 m，朝东南 138° 拍摄", font=F_SUB, fill=GREY)
 
-# ---- 主图区 ----
-main_h = 660
-photo = Image.open("annot_photo.jpg").convert("RGB")
-photo.thumbnail((890, main_h))
-mp = Image.open("map_annot.jpg").convert("RGB").crop((150, 150, 1650, 1650))
-mp.thumbnail((640, main_h))
+def panel(base: Path, name: str | None, box: tuple[int, int]) -> Image.Image | None:
+    if not name:
+        return None
+    p = base / name
+    if not p.exists():
+        print(f"panel not found, skipped: {p}", file=sys.stderr)
+        return None
+    im = Image.open(p).convert("RGB")
+    im.thumbnail(box)
+    return im
 
-sec = Image.new("RGB", (W, main_h + 44), BG)
-x = 48
-sec.paste(photo, (x, 44))
-px0 = x + photo.width + 24
-sec.paste(mp, (px0, 44))
-d2 = ImageDraw.Draw(sec)
-d2.text((48, 8), "① 像素实测：钟楼两面投影宽 624 / 561 px", font=F_H, fill=INK)
-d2.text((px0, 8), "② 机位落点与朝向扇形", font=F_H, fill=INK)
 
-# ---- 证据链 ----
-ev = [
- ("K1  主体锚定", "照片主体为三重檐攒尖顶、绿琉璃瓦、金宝顶、砖砌券门基座，外围为环形花坛盘道＋十字街 —— 唯一对应西安钟楼（明洪武十七年，全国重点文保，WGS84 34.26147/108.94278）。水印时间为 2026-09-19 19:22。", "photo.jpg"),
- ("K2  相机方位（实测）", "像素扫描基座左右棱与转角棱：左面投影 624 px、右面投影 561 px，比值 1.11 → 两面与视线夹角约 42°/48°，即相机几乎落在钟楼的对角线方向上（偏离约 3°），因此照片中同时看到钟楼相邻两个面。", "annot_photo.jpg"),
- ("K3  机位侧别（排除）", "卫星图：钟楼东南角紧贴开元商城大楼（无空地），东北角为钟楼邮局，西南为钟楼饭店一线；只有西北/西侧是开阔人行广场。照片前景是能容数十人的大铺装广场，因此机位只能在西北侧，排除东南侧与东北侧。", "sat_se_zoom.jpg"),
- ("K4  距离反算", "基座可见宽 1185 px、钟楼通高（宝顶至基座底）905 px。按手机主摄 1x（水平 FOV≈55°）反算：相机距钟楼中心约 85 m；若为长焦则距离相应放大，方位结论不变。", "annot_photo.jpg"),
- ("K5  机位与朝向", "以钟楼中心为原点、方位 318°（西北）、距离 85 m 落点，扇形朝东南 138°（水平视角 54°）—— 扇形完全落在西大街北侧人行广场内，与照片中『广场—栏杆—绿化带—盘道车流—环形花坛—钟楼』的地物序列一致。", "map_annot.jpg"),
-]
+def build(spec: dict, base: Path, out: Path) -> None:
+    W = int(spec.get("width", 1200))
+    pad = int(W * 0.04)
+    lab = LABELS.get(spec.get("lang", "en"), LABELS["en"])
+    F_TITLE = _font(int(W * 0.040))
+    F_SUB = _font(int(W * 0.020))
+    F_H = _font(int(W * 0.023))
+    F_B = _font(int(W * 0.018))
+    F_S = _font(int(W * 0.015))
+    inner = W - 2 * pad
+    probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    blocks: list[tuple[int, callable]] = []
 
-rows = []
-maxw = W - 400
-tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
-for t, b, img in ev:
-    rows.append((t, wrap(tmp, b, F_B, maxw), img))
-ev_h = sum(max(150, 20 + 40 * len(r[1])) for r in rows) + 30 * len(rows) + 40
+    def text_block(text: str, font, fill, lead: float, top: int = 0, bottom: int = 0):
+        lines = wrap(probe, text, font, inner)
+        h = int(top + len(lines) * lead + bottom)
 
-# ---- 底部 ----
-foot_h = 320
-H = head_h + main_h + 44 + ev_h + foot_h
-out = Image.new("RGB", (W, H), BG)
-out.paste(canvas, (0, 0))
-out.paste(sec, (0, head_h))
-d = ImageDraw.Draw(out)
+        def draw(d, y, lines=lines, font=font, fill=fill, lead=lead, top=top, h=h):
+            for i, ln in enumerate(lines):
+                d.text((pad, y + top + i * lead), ln, font=font, fill=fill)
+            return y + h
+        blocks.append((h, draw))
 
-y = head_h + main_h + 44
-d.rectangle([0, y, W, y + 4], fill=(220, 224, 230))
-d.text((48, y + 22), "证据链", font=F_H, fill=ACC)
-y += 84
-for t, lines, img in rows:
-    thumb = Image.open(img).convert("RGB")
-    thumb.thumbnail((260, 150))
-    ty = y + max(0, (max(150, 20 + 40 * len(lines)) - thumb.height) // 2)
-    out.paste(thumb, (48, ty))
-    d.text((336, y + 4), t, font=F_H, fill=ACC)
-    for i, ln in enumerate(lines):
-        d.text((336, y + 50 + i * 40), ln, font=F_B, fill=INK)
-    y += max(150, 20 + 40 * len(lines)) + 30
+    if spec.get("title"):
+        text_block(spec["title"], F_TITLE, INK, F_TITLE.size * 1.32, bottom=6)
+    if spec.get("subtitle"):
+        text_block(spec["subtitle"], F_SUB, MUTED, F_SUB.size * 1.5, bottom=14)
 
-d.rectangle([0, y, W, y + 4], fill=(220, 224, 230))
-y += 24
-d.text((48, y), "结论坐标", font=F_H, fill=ACK if False else ACC)
-d.text((48, y + 46), "WGS84  34.26204 N, 108.94216 E   （±40 m）", font=F_MONO, fill=INK)
-d.text((48, y + 86), "GCJ-02  34.26046 N, 108.94682 E      BD-09  34.26671 N, 108.95324 E", font=F_S, fill=GREY)
-d.text((48, y + 126), "相机朝向：东南约 138°   可见面：钟楼北面（画面左，较正）＋ 西面（画面右，较侧）", font=F_B, fill=INK)
-d.text((48, y + 166), "置信度：城市级 高（唯一锚点钟楼）｜片区级 高（西北侧广场）｜点位级 中（±40 m，缺该时段车行道街景逐点比对）", font=F_B, fill=ACC)
+    if spec.get("answer"):
+        lead = F_B.size * 1.6
+        lines = wrap(probe, spec["answer"], F_B, inner - 40)
+        h = int(20 + 28 + len(lines) * lead + 18)
 
-out.save("conclusion.jpg", quality=90)
-print(out.size)
+        def draw_answer(d, y, lines=lines, lead=lead, h=h):
+            d.rectangle([pad, y, W - pad, y + h], fill=BOX, outline=RULE, width=1)
+            d.rectangle([pad, y, pad + 5, y + h], fill=ACCENT)
+            d.text((pad + 20, y + 12), lab["answer"], font=F_S, fill=ACCENT)
+            for i, ln in enumerate(lines):
+                d.text((pad + 20, y + 42 + i * lead), ln, font=F_B, fill=INK)
+            return y + h + 22
+        blocks.append((h + 22, draw_answer))
+
+    pim = panel(base, spec.get("photo"), (int(inner * 0.52), int(W * 0.42)))
+    mim = panel(base, spec.get("map"), (int(inner * 0.44), int(W * 0.42)))
+    if pim or mim:
+        gap = int(W * 0.02)
+        ph = max([im.height for im in (pim, mim) if im] or [0])
+        capt = bool(spec.get("photo_caption") or spec.get("map_caption"))
+        cap_h = 34 if capt else 8
+
+        def draw_panels(d, y, pim=pim, mim=mim, gap=gap, ph=ph, cap_h=cap_h):
+            y = int(y)
+            x = pad
+            for im, cap in ((pim, spec.get("photo_caption")), (mim, spec.get("map_caption"))):
+                if not im:
+                    continue
+                d.rectangle([x - 1, y - 1, x + im.width, y + im.height], outline=RULE, width=1)
+                canvas.paste(im, (x, y))
+                if cap:
+                    for i, ln in enumerate(wrap(probe, cap, F_S, im.width)[:2]):
+                        d.text((x, y + im.height + 6 + i * F_S.size * 1.3), ln, font=F_S, fill=MUTED)
+                x += im.width + gap
+            return y + ph + cap_h
+        blocks.append((ph + cap_h, draw_panels))
+
+    if spec.get("facts"):
+        lead = F_B.size * 1.55
+        packed = [(f, wrap(probe, "· " + f, F_B, inner)) for f in spec["facts"]]
+        h = int(F_H.size * 1.9 + sum(len(ls) * lead + 6 for _, ls in packed) + 14)
+
+        def draw_facts(d, y, packed=packed, lead=lead, h=h):
+            d.text((pad, y), lab["facts"], font=F_H, fill=ACCENT)
+            y += F_H.size * 1.9
+            for _, lines in packed:
+                for i, ln in enumerate(lines):
+                    d.text((pad, y + i * lead), ln, font=F_B, fill=INK)
+                y += len(lines) * lead + 6
+            return y + 14
+        blocks.append((h, draw_facts))
+
+    if spec.get("chain"):
+        items = []
+        for it in spec["chain"]:
+            txt = it.get("text", "") if isinstance(it, dict) else str(it)
+            img = it.get("image") if isinstance(it, dict) else None
+            thumb = panel(base, img, THUMB) if img else None
+            colw = inner - (thumb.width + 16 if thumb else 0)
+            lines = wrap(probe, txt, F_B, colw)
+            hh = int(max(THUMB[1] if thumb else 0, len(lines) * F_B.size * 1.5))
+            items.append((thumb, lines, hh))
+        h = int(F_H.size * 1.9 + sum(hh + 14 for _, _, hh in items) + 6)
+
+        def draw_chain(d, y, items=items, h=h):
+            y = int(y)
+            d.text((pad, y), lab["chain"], font=F_H, fill=ACCENT)
+            y += F_H.size * 1.9
+            for thumb, lines, hh in items:
+                y = int(y)
+                if thumb:
+                    d.rectangle([pad - 1, y - 1, pad + thumb.width, y + thumb.height], outline=RULE, width=1)
+                    canvas.paste(thumb, (pad, y))
+                tx = pad + (thumb.width + 16 if thumb else 0)
+                for i, ln in enumerate(lines):
+                    d.text((tx, y + i * F_B.size * 1.5), ln, font=F_B, fill=INK)
+                y += hh + 14
+            return y + 6
+        blocks.append((h, draw_chain))
+
+    coords = spec.get("coords") or []
+    conf = spec.get("confidence") or []
+    if coords or conf:
+        lead = F_B.size * 1.6
+        h = int(F_H.size * 1.9 + len(coords) * lead + (10 + F_H.size * 1.9 + len(conf) * lead if conf else 0) + 12)
+
+        def draw_meta(d, y, coords=coords, conf=conf, lead=lead, h=h):
+            if coords:
+                d.text((pad, y), lab["coords"], font=F_H, fill=ACCENT)
+                y += F_H.size * 1.9
+                for c in coords:
+                    d.text((pad, y), str(c.get("label", "")), font=F_B, fill=MUTED)
+                    d.text((pad + int(inner * 0.18), y), str(c.get("value", "")), font=F_B, fill=INK)
+                    y += lead
+            if conf:
+                y += 10
+                d.text((pad, y), lab["confidence"], font=F_H, fill=ACCENT)
+                y += F_H.size * 1.9
+                for c in conf:
+                    d.text((pad, y), f"{c.get('level', '')}  {c.get('grade', '')}".strip(), font=F_B, fill=INK)
+                    if c.get("why"):
+                        d.text((pad + int(inner * 0.30), y), str(c["why"]), font=F_S, fill=MUTED)
+                    y += lead
+            return y + 12
+        blocks.append((h, draw_meta))
+
+    footer = spec.get("footer")
+    total = sum(h for h, _ in blocks)
+    foot_lines = wrap(probe, footer, F_S, inner) if footer else []
+    if foot_lines:
+        total += int(len(foot_lines) * F_S.size * 1.45 + 22)
+
+    canvas = Image.new("RGB", (W, pad + total + pad), BG)
+    d = ImageDraw.Draw(canvas)
+    y = pad
+    for _, fn in blocks:
+        y = int(fn(d, y))          # keep the cursor integral: PIL paste/rectangle reject floats
+    if foot_lines:
+        d.line([(pad, y + 6), (W - pad, y + 6)], fill=RULE, width=1)
+        for i, ln in enumerate(foot_lines):
+            d.text((pad, y + 20 + i * F_S.size * 1.45), ln, font=F_S, fill=MUTED)
+
+    canvas.save(out, quality=92)
+    print(f"{out}  {canvas.size[0]}x{canvas.size[1]}")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("spec", type=Path, help="JSON describing the card")
+    ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--base", type=Path, help="directory the panel paths are relative to (default: the spec's folder)")
+    args = ap.parse_args()
+    spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    build(spec, args.base or args.spec.parent, args.out)
+
+
+if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+    main()
