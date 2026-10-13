@@ -22,8 +22,10 @@ spec.json — only "title" is required, everything else is optional:
   "photo_caption": "What that panel shows",
   "map":        "map_annotated.jpg",        # right panel
   "map_caption": "...",
-  "chain": [                                # evidence chain, in investigation order
-    {"text": "clue → inference → command that ran → file it produced", "image": "card/step1.jpg"}
+  "chain": [                                # reasoning chain, in investigation order
+    {"text": "what was seen → what it was checked against → what it established",
+     "basis": "source of the check: gazetteer / street view + date / your own pixel measurement",
+     "image": "card/step1.jpg"}
   ],
   "coords":     [{"label": "WGS84", "value": "34.26204, 108.94216"}],
   "confidence": [{"level": "City", "grade": "high", "why": "unique anchor"}],
@@ -57,10 +59,10 @@ BOX = (243, 245, 248)
 THUMB = (230, 140)
 
 LABELS = {
-    "en": {"facts": "Key facts", "chain": "Evidence chain", "coords": "Coordinates",
-           "confidence": "Confidence", "answer": "Conclusion"},
-    "zh": {"facts": "关键事实", "chain": "证据链", "coords": "坐标", "confidence": "置信度",
-           "answer": "结论"},
+    "en": {"facts": "Key facts", "chain": "How each step was established", "coords": "Coordinates",
+           "confidence": "Confidence", "answer": "Conclusion", "basis": "basis"},
+    "zh": {"facts": "关键事实", "chain": "推理链（每步：观察 → 依据 → 推断）", "coords": "坐标",
+           "confidence": "置信度", "answer": "结论", "basis": "依据"},
 }
 
 
@@ -172,27 +174,36 @@ def build(spec: dict, base: Path, out: Path) -> None:
         items = []
         for it in spec["chain"]:
             txt = it.get("text", "") if isinstance(it, dict) else str(it)
+            basis = it.get("basis", "") if isinstance(it, dict) else ""
             img = it.get("image") if isinstance(it, dict) else None
             thumb = panel(base, img, THUMB) if img else None
             colw = inner - (thumb.width + 16 if thumb else 0)
             lines = wrap(probe, txt, F_B, colw)
-            hh = int(max(THUMB[1] if thumb else 0, len(lines) * F_B.size * 1.5))
-            items.append((thumb, lines, hh))
-        h = int(F_H.size * 1.9 + sum(hh + 14 for _, _, hh in items) + 6)
+            b_lines = wrap(probe, f"{lab['basis']}：{basis}", F_S, colw - 8) if basis else []
+            hh = int(max(THUMB[1] if thumb else 0,
+                         len(lines) * F_B.size * 1.5 + (len(b_lines) * F_S.size * 1.45 + 4 if b_lines else 0)))
+            items.append((thumb, lines, b_lines, hh))
+        h = int(F_H.size * 1.9 + sum(hh + 16 for _, _, _, hh in items) + 6)
 
         def draw_chain(d, y, items=items, h=h):
             y = int(y)
             d.text((pad, y), lab["chain"], font=F_H, fill=ACCENT)
             y += F_H.size * 1.9
-            for thumb, lines, hh in items:
+            for thumb, lines, b_lines, hh in items:
                 y = int(y)
                 if thumb:
                     d.rectangle([pad - 1, y - 1, pad + thumb.width, y + thumb.height], outline=RULE, width=1)
                     canvas.paste(thumb, (pad, y))
                 tx = pad + (thumb.width + 16 if thumb else 0)
+                ty = y
                 for i, ln in enumerate(lines):
-                    d.text((tx, y + i * F_B.size * 1.5), ln, font=F_B, fill=INK)
-                y += hh + 14
+                    d.text((tx, ty + i * F_B.size * 1.5), ln, font=F_B, fill=INK)
+                ty = int(ty + len(lines) * F_B.size * 1.5 + 2)
+                for i, ln in enumerate(b_lines):          # 依据：灰色小字，单独成行
+                    d.text((tx + 8, ty + i * F_S.size * 1.45), ln, font=F_S, fill=MUTED)
+                if b_lines:
+                    d.line([(tx, ty + 2), (tx, ty + int(len(b_lines) * F_S.size * 1.45))], fill=ACCENT, width=2)
+                y += hh + 16
             return y + 6
         blocks.append((h, draw_chain))
 

@@ -141,9 +141,26 @@ Output:
 
 Use English for tool messages, report headings and generated labels. Preserve source text (OCR, place names, service responses) verbatim as evidence; explain or translate it for the reader. Write the agent's final report in the user's language. In Chinese, use 高/中/低 for high/medium/low and 城市/片区/路/楼/楼层 for city/area/road/building/floor.
 
-### Where the files go
+### The chain on a conclusion card is a reasoning chain, not a list of findings
 
-Keep each run in its own folder, and keep that folder tidy — a flat pile of seventy files is
+Every item must carry three things in order — **what was seen → what it was checked against → what it
+established** — and must name the source of that check. A bare `→ Bell Tower` or `→ bearing 138°` tells the
+reader the result and nothing about why they should believe it; a conclusion whose basis is missing cannot
+be audited, and the reader has no way to tell a measured step from a guessed one.
+
+In the spec an item is `{"text": "...", "basis": "...", "image": "..."}`:
+- `text` — the step in observed → checked-against → concluded form;
+- `basis` — printed underneath in small grey type behind a coloured rule; name the source concretely
+  (`local gazetteer (building layout)`, `Baidu street view 2024-03-06, brick staining`, `own pixel
+  measurement + perspective geometry`, `POI lookup, two sources agreeing`). If a step has no basis,
+  it is not ready to be published as a step;
+- `image` — the artefact that step produced (optional, but each thumbnail must be a real artefact).
+
+Give the cheap shortcuts their due too: when the subject is public knowledge, say so
+("recognisable landmark → looked it up, no inference needed") instead of dressing the step up as
+clue-based deduction. Writing the obvious path honestly is what makes the non-obvious steps credible.
+
+### Where the files goKeep each run in its own folder, and keep that folder tidy — a flat pile of seventy files is
 unusable when the user wants to check the work:
 
     <run>/src/     input photos
