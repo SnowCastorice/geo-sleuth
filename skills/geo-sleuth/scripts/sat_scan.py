@@ -93,7 +93,8 @@ def cell_image(lat: float, lon: float, zoom: int, size: int, source: str, proxy:
     return tile
 
 
-def prefetch(points: dict, zoom: int, size: int, source: str, proxy: str | None, cache: Path) -> None:
+def prefetch(points: dict, zoom: int, size: int, source: str, proxy: str | None, cache: Path,
+             workers: int = 8) -> None:
     crs = tiles.SOURCES[source].get("crs", "wgs")
     need = set()
     for lat, lon in points.values():
@@ -103,7 +104,7 @@ def prefetch(points: dict, zoom: int, size: int, source: str, proxy: str | None,
             for ty in range(int(y0 // 256), int((y0 + size) // 256) + 1):
                 need.add((tx, ty))
     cache.mkdir(parents=True, exist_ok=True)
-    with ThreadPoolExecutor(16) as ex:
+    with ThreadPoolExecutor(workers) as ex:
         list(ex.map(lambda t: tiles._get(tiles._tile_url(source, t[0], t[1], zoom), cache / f"{source}_{zoom}_{t[0]}_{t[1]}.jpg", proxy), need))
 
 
@@ -231,7 +232,7 @@ def run(points: dict, args) -> None:
     if not pos:
         sys.exit("give --preset or --query")
     t0 = time.time()
-    prefetch(points, args.zoom, args.size, args.source, args.proxy, cache)
+    prefetch(points, args.zoom, args.size, args.source, args.proxy, cache, args.workers)
     names = list(points)
     with ThreadPoolExecutor(8) as ex:
         ims = list(ex.map(lambda n: cell_image(points[n][0], points[n][1], args.zoom, args.size, args.source, args.proxy, cache), names))
@@ -298,6 +299,7 @@ def main() -> None:
         sp.add_argument("--source", choices=list(tiles.SOURCES), default="google")
         sp.add_argument("--proxy", default=os.environ.get("GEO_PROXY"), help=PROXY_HELP)
         sp.add_argument("--cache", type=Path, default=Path(".geo-cache/tiles"))
+        sp.add_argument("--workers", type=int, default=8, help="parallel tile downloads (default 8; lower if a service throttles you)")
 
     g = sub.add_parser("grid")
     g.add_argument("--bbox", required=True, help="s,w,n,e")

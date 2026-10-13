@@ -43,6 +43,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -117,16 +118,29 @@ def warn_zoom(source: str, zoom: int) -> None:
 
 
 def _get(url: str, path: Path, proxy: str | None) -> bool:
+    """Fetch one tile, backing off briefly on 429 (rate limit).
+
+    Imagery services throttle bursts, and a throttled tile does not fail loudly: it just shows up
+    later as a black block in the middle of the mosaic. So a 429 is retried instead of dropped.
+    """
     if path.exists() and path.stat().st_size > 1000:
         return True
-    cmd = ["curl", "-q", "-s", "-m", "60", "-o", str(path), url]
-    cmd += curl_args(proxy)
-    subprocess.run(cmd, check=False)
-    return path.exists() and path.stat().st_size > 1000
+    for attempt in range(3):
+        cmd = ["curl", "-q", "-s", "-m", "60", "-w", "%{http_code}", "-o", str(path), url]
+        cmd += curl_args(proxy)
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        code = (r.stdout or "").strip().splitlines()[-1] if (r.stdout or "").strip() else ""
+        if path.exists() and path.stat().st_size > 1000:
+            return True
+        if code == "429":
+            time.sleep(1.0 + attempt * 1.5)
+            continue
+        break
+    return False
 
 
 def fetch(center: tuple[float, float], zoom: int, radius: int, out: Path, source: str,
-          proxy: str | None, cache: Path, tk: str | None = None) -> dict:
+          proxy: str | None, cache: Path, tk: str | None = None, workers: int = 8) -> dict:
     cache.mkdir(parents=True, exist_ok=True)
     crs = SOURCES[source].get("crs", "wgs")
     clat, clon = _to_tile_crs(crs, *center)      # GCJ-02 sources: shift the center first, or the mosaic is off by ~460 m
@@ -144,7 +158,7 @@ def fetch(center: tuple[float, float], zoom: int, radius: int, out: Path, source
 
     img = Image.new("RGB", (256 * len(xs), 256 * len(ys)), "black")
     failed = 0
-    with ThreadPoolExecutor(16) as ex:
+    with ThreadPoolExecutor(workers) as ex:
         for (x, y), p, ok in ex.map(job, jobs):
             if not ok:
                 failed += 1
@@ -327,6 +341,7 @@ def main() -> None:
     f.add_argument("--out", type=Path, required=True)
     f.add_argument("--source", choices=list(SOURCES), default="google", help="imagery source: google/esri/amap/tianditu")
     f.add_argument("--tk", default=os.environ.get("GEO_TIANDITU_KEY"), help="Tianditu key; defaults to GEO_TIANDITU_KEY")
+    f.add_argument("--workers", type=int, default=8, help="parallel tile downloads (8 by default; raise on a fast link, lower if a service throttles you)")
     f.add_argument("--proxy", default=os.environ.get("GEO_PROXY"), help=PROXY_HELP)
     f.add_argument("--cache", type=Path, default=Path(".geo-cache/tiles"))
 
@@ -379,13 +394,18 @@ def main() -> None:
         if args.grid:
             args.out.with_suffix(".cells.json").write_text(json.dumps(pts, indent=1), encoding="utf-8")
             print(f"grid: {len(pts)} cells (cell name r<row>c<col>, rows north to south, columns west to east; cell center coordinates -> {args.out.with_suffix('.cells.json')})")
+            per_cell = ((args.size + 255) // 256 + 1) ** 2
+            est = len(pts) * per_cell
+            warn = "  ← big: a service can rate-limit a grid this size, so run it in stages" if est > 1000 else ""
+            print(f"  ≈ {est} tile requests ({per_cell} per cell × {len(pts)} cells){warn}")
         for p in sheet(pts, args.zoom, args.size, args.cols, args.out, args.source, args.proxy, args.cache, args.tk):
             print(p)
         return
     if args.cmd == "fetch":
         lat, lon = map(float, args.center.split(","))
         warn_zoom(args.source, args.zoom)
-        meta = fetch((lat, lon), args.zoom, args.radius, args.out, args.source, args.proxy, args.cache, args.tk)
+        meta = fetch((lat, lon), args.zoom, args.radius, args.out, args.source, args.proxy, args.cache, args.tk,
+                     args.workers)
         print(json.dumps(meta))
     elif args.cmd == "mark":
         if not (args.points or args.geojson or args.sector):
