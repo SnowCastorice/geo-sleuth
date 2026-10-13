@@ -140,6 +140,27 @@ Output:
 
 Use English for tool messages, report headings and generated labels. Preserve source text (OCR, place names, service responses) verbatim as evidence; explain or translate it for the reader. Write the agent's final report in the user's language. In Chinese, use 高/中/低 for high/medium/low and 城市/片区/路/楼/楼层 for city/area/road/building/floor.
 
+### Where the files go
+
+Keep each run in its own folder, and keep that folder tidy — a flat pile of seventy files is
+unusable when the user wants to check the work:
+
+    <run>/src/     input photos
+    <run>/sat/     satellite imagery: raw fetches, marked copies, multi-source comparisons
+    <run>/sv/      street-view evidence: view rings, comparison sheets, the panorama index
+    <run>/cards/   the conclusion card, plus the spec and annotated photo it was built from
+    <run>/work/    intermediates: scripts, zoomed crops, caches, the candidate board
+    <run>/result.json
+
+**Give the conclusion card a unique file name**: `<slug>-conclusion-YYYYMMDD.jpg`, for example
+`xian-belltower-conclusion-20261013.jpg` (slug = place in latin letters, then the subject).
+Never ship a bare `conclusion.jpg` — the mobile app matches files by name across folders, so
+cards from different runs overwrite one another and the user ends up opening the wrong one.
+The same rule applies to every artefact handed over: name it after the place, not after its type.
+
+A conclusion card is superseded, not deleted: when a later run corrects it, move the old one to
+`work/superseded/` with `-superseded` in the name and keep it, so the revision stays traceable.
+
 | Level | High | Medium | Low |
 |---|---|---|---|
 | City | Text, plates, area codes or a confirmed anchor | Several independent weak clues agree | A single weak clue, or only the hint |
