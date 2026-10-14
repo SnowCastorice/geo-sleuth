@@ -34,6 +34,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+from _device import torch_device
 from _net import PROXY_HELP
 from _net import model_proxy_env
 import glob
@@ -68,11 +69,6 @@ def _proxy_env(proxy: str | None) -> None:
     model_proxy_env(proxy)
 
 
-def _device():
-    import torch
-    return "mps" if torch.backends.mps.is_available() else "cpu"
-
-
 IMNET = ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 CLIPN = ([0.48145466, 0.4578275, 0.40821073], [0.26862954, 0.26130258, 0.27577711])
 
@@ -102,7 +98,7 @@ class Embedder:
         import torch
         from transformers import AutoModel, CLIPModel
         self.method = method
-        self.dev = _device()
+        self.dev = torch_device(torch)
         t0 = time.time()
         try:
             self.model = (CLIPModel if method == "clip" else AutoModel).from_pretrained(MODELS[method]).to(self.dev).eval()
