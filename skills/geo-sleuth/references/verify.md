@@ -167,3 +167,8 @@ of view**, so the cone spans `heading ± FOV/2`. Pass the real FOV (≈68–70°
 camera, ≈37° for 2×, ≈100° for ultrawide) — and sanity-check it against the photo: **any landmark the
 photo plainly shows must fall inside the drawn cone**; if one does not, the FOV or the heading is
 wrong (a landmark sitting exactly at the frame edge, partially cropped, is the expected case).
+
+**Make the cone complete**: the mosaic must be **wider than the sector radius** (aim for ≥1.25×), or
+the arc is cut off at the frame edge and the drawing looks like no cone at all. A z18 mosaic at
+`--tiles 2/--radius 2` covers only ≈±0.57 km, which cannot hold a 900 m sector — use z17 at
+`--radius 4` (≈±1.14 km) or shrink the sector radius to fit.
