@@ -124,6 +124,7 @@ The endpoints are all at `https://mapsv0.bdimg.com/`, need no key, and must be a
 | OpenInfraMap (openinframap.org) | Power lines and voltage, substations | Viewed manually on the web; voltage may be untagged |
 | AWS Terrain Tiles (Terrarium) | Global elevation, about 30 m | `terrain.py`; details smaller than a hundred meters are unreliable |
 | City open data | Street trees (species, trunk diameter at breast height, location), etc. | Many foreign cities, few Chinese ones |
+| Tianditu vector base (`vec_w` roads under `cva_w` labels) + reverse-geocoding API | `roadmap.py` — shadow-free road base with candidate points / a view sector drawn on it; `revgeo.py` — official address for candidate points ("on the street" vs "inside which building") | Same server key as `tiles.py --source tianditu` (`GEO_TIANDITU_KEY`); CGCS2000 ≈ WGS84, no conversion; the address comes from the official database and is also a good cross-check when a map POI looks tens of metres off |
 
 ## Time and weather
 

@@ -109,6 +109,7 @@ uv run scripts/evidence.py spec.json --out evidence.jpg      # satellite image +
 ## 8. Final check before concluding
 
 - [ ] Every "matched" and "measured" has a file actually produced in this session
+- [ ] Where the conclusion depends on "on the street / inside which building", the point was checked against **data** (`roadmap.py` vector road base, `revgeo.py` official address), not only against the image
 - [ ] The error radius comes from intersection geometry or multi-item comparison, not made-up decimal places
 - [ ] All four bearing self-check items passed
 - [ ] After finding an anchor, you didn't go back to generic features to pick another place
@@ -118,3 +119,27 @@ uv run scripts/evidence.py spec.json --out evidence.jpg      # satellite image +
 - [ ] If you couldn't pin a point, you wrote "the level it's determined to + what information is still missing"
 - [ ] Every exclusion reason was verified: exclusions by "X isn't in the image" had the frame and occlusion computed; unverified interpretations were used only for ranking
 - [ ] When the candidates are a few discrete ones, you chose a main answer, not a midpoint with a big circle
+
+## 9. Data-level checks: the road network and the official address
+
+Two questions imagery keeps getting wrong — "is this point on the street?" and "which building
+does it sit in?" — are answered directly by data. Use these before (or against) any pixel
+reading; in two real runs a camera point was reported tens of metres inside a building because a
+shadowed image was trusted over the data.
+
+- **Vector road base (no shadow, road names printed)**
+  `roadmap.py --center <lat,lon> --zoom 18 --tiles 2 --points cands.json --out road.jpg`
+  Roads draw as roads and the label layer names them ("南京东路"), so a candidate point can be
+  read against the street itself. Add `--sector lat,lon,heading,spread,radius_m` to put the view
+  cone on the same base.
+- **Official address for each candidate point**
+  `revgeo.py --points cands.json --out rev.json` (or `revgeo.py 31.23680,121.47025`)
+  Read the returned address literally: "…南京东路830" = a street-front address; "…第一百货商业中心7号门"
+  = gate 7 of the mall, i.e. **inside the building**; "…步行街西口" = an entrance/plaza area. The
+  address is the tie-breaker when two candidate latitudes both "look plausible" on imagery.
+- **Traps**: mall POIs are usually interior floor points ("3F", "2F") and some providers carry a
+  systematic offset of tens of metres (in one run a map POI put the same door 60 m north of where
+  the official address and the imagery agreed it was) — never let one POI outvote road/address
+  data, and treat a cross-source disagreement of that size as your own measuring problem first.
+- **Both take the same Tianditu server key as `tiles.py --source tianditu` (`GEO_TIANDITU_KEY`);
+  Tianditu is CGCS2000 ≈ WGS84, so pass WGS84 coordinates as-is.**
