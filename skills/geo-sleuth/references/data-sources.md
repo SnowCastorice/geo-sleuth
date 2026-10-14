@@ -125,6 +125,7 @@ The endpoints are all at `https://mapsv0.bdimg.com/`, need no key, and must be a
 | AWS Terrain Tiles (Terrarium) | Global elevation, about 30 m | `terrain.py`; details smaller than a hundred meters are unreliable |
 | City open data | Street trees (species, trunk diameter at breast height, location), etc. | Many foreign cities, few Chinese ones |
 | Tianditu vector base (`vec_w` roads under `cva_w` labels) + reverse-geocoding API | `roadmap.py` — shadow-free road base with candidate points / a view sector drawn on it; `revgeo.py` — official address for candidate points ("on the street" vs "inside which building") | Same server key as `tiles.py --source tianditu` (`GEO_TIANDITU_KEY`); CGCS2000 ≈ WGS84, no conversion; the address comes from the official database and is also a good cross-check when a map POI looks tens of metres off |
+| AMap 2D road base with POI labels (`webrd`, `style=8`; `style=7` = no labels) | `amap_road.py` — stitches road tiles into a mosaic + a `tiles.py`-compatible sidecar (`crs="gcj"`), so points / a view sector can be drawn on it with `mark`; the labels (watchtower numbers, shop and bridge names, hotel names) are what make a point checkable | Tiles are cut on GCJ-02 — the script records that in the sidecar and `tiles.py` converts WGS84 internally; the satellite counterpart of the same provider is `tiles.py --source amap` |
 
 ## Time and weather
 

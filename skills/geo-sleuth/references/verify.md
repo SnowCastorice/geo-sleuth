@@ -143,3 +143,27 @@ shadowed image was trusted over the data.
   data, and treat a cross-source disagreement of that size as your own measuring problem first.
 - **Both take the same Tianditu server key as `tiles.py --source tianditu` (`GEO_TIANDITU_KEY`);
   Tianditu is CGCS2000 ≈ WGS84, so pass WGS84 coordinates as-is.**
+
+### 9.1 Deliver the conclusion on a map base as well, not only on imagery
+
+A satellite mosaic shows shapes; a map base *states* names. Annotate the camera position and the
+view cone **twice — once on imagery, once on a 2D road/vector base** — and hand over both:
+
+- `amap_road.py --center <lat,lon> --zoom 18 --tiles 2 --points cands.json --label \
+   --sector <lat,lon>,<heading>,<FOV>,<radius_m> --out road.jpg`
+  AMap road tiles (`style=8`, labels on; `style=7` for no labels) stitched into a mosaic plus a
+  `tiles.py`-compatible sidecar (`crs="gcj"`), so `tiles.py mark` and evidential drawing work on it
+  unchanged. Its POI labels and building footprints answer "which block is this" at a glance.
+- `roadmap.py` (Tianditu `vec_w` + `cva_w`) is the licence-free alternative, also with road names.
+
+Why it matters: in a Xi'an city-wall run the map labels "22号敌楼" (watchtower no. 22),
+"永宁门城楼 / 永宁门瓮城 / 月城咖啡屋 / 城墙故事文创店 / 吊桥" and the hotel name landed exactly on
+the points deduced from the photo, converting a soft pixel reading into a checkable one. Read the
+labels before trusting your own outline of a gate, a moat or a compound (**main wall vs 瓮城/月城/城台
+are different structures — a POI often names the main wall or an interior point**).
+
+**Sector FOV convention**: `--sector lat,lon,heading,FOV,radius_m` takes the **full horizontal field
+of view**, so the cone spans `heading ± FOV/2`. Pass the real FOV (≈68–70° for a 1× phone main
+camera, ≈37° for 2×, ≈100° for ultrawide) — and sanity-check it against the photo: **any landmark the
+photo plainly shows must fall inside the drawn cone**; if one does not, the FOV or the heading is
+wrong (a landmark sitting exactly at the frame edge, partially cropped, is the expected case).

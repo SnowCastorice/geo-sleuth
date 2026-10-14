@@ -133,6 +133,17 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/evidence.py spec.json --out evidence.jpg
 
 Show `evidence.jpg` to the user together with the answer, without waiting to be asked. A road-level claim from satellite imagery needs a ≥z18 crop, not a z17 glance.
 
+**Draw the answer on a map base too, not only on imagery.** A satellite mosaic shows shapes; a map
+base states names. Mark the camera position and the view cone twice — once on the imagery, once on a
+2D road/vector base — and deliver both: `amap_road.py` (AMap road tiles with POI labels + a
+`tiles.py`-compatible sidecar, so `mark` works unchanged) or `roadmap.py` (Tianditu `vec_w`+`cva_w`,
+licence-free). Labels like "22号敌楼", a shop name or a bridge name pin a point far better than
+pixels, and they catch the classic mistake of reading the main wall where the photo shows the 瓮城.
+When a `--sector lat,lon,heading,FOV,radius_m` is drawn, the 4th number is the **full** horizontal
+FOV (the cone spans heading ± FOV/2) — take it from the lens (≈68–70° for a 1× phone main camera) and
+check it against the photo: a landmark the photo plainly shows must not fall outside the cone.
+See `references/verify.md` §9.1.
+
 Output:
 1. One-sentence conclusion: place + camera position + heading (+ direction of travel and capture time, where applicable)
 2. Coordinates: WGS84, plus the local datum when the region card names one (`geo.py convert`), **with error radius**
@@ -210,6 +221,7 @@ A conclusion card is superseded, not deleted: when a later run corrects it, move
 - **Source order (this project's standing rule): try `google` and `amap` first — they are the sharpest and the most current; fall back to `tianditu` only when those two have no usable coverage of the target.** Judge "no coverage" from `failed_tiles` in the fetch output, or from black blocks in the mosaic — do not assume, look. Tianditu's value is its official, licence-free provenance, not its image quality (it is greyer and often a season or two older). Baidu imagery is **not** available to scripts: its `shangetu` / `starpic` tile endpoints answer every external request — any zoom, any location including Beijing — with the same 2506-byte "此区域无卫星图" placeholder, so it was dropped from the source list.
 - Imagery sources (`tiles.py --source`, also accepted by `sat_scan.py`): `google` (default, WGS84, needs a proxy in China), `esri` (WGS84, usually reachable directly), `amap` (AMap/Gaode satellite, GCJ-02 — the script corrects the offset internally, the API stays WGS84) and `tianditu` (Tianditu imagery, the only licence-free Chinese source; needs `--tk` or `GEO_TIANDITU_KEY`). **Tianditu specifics, measured**: the key must be of the **server** type — a browser-type key answers script requests with `403 code 301012 "Key权限类型为:浏览器端，请使用浏览器访问！"` (faking `Referer` does not help; only a browser `User-Agent` gets through, which is a way around the type restriction rather than a fix). The IP allow-list may be **left empty**, which simply disables IP checking — the right choice when the machine's public IP is not stable. Expect a **5–10 minute delay** before a new key works. Tianditu is CGCS2000, which aligns with WGS84 at this scale: fetching the same point from `tianditu` and `google` yields **identical tile indices**, so no coordinate conversion is needed. Its tiles are noticeably greyer and often a season or two behind Google/AMap, so check the capture date before trusting fine detail. Chinese civilian imagery stops at zoom 18 (about 0.6 m/px); anything finer means buying raw scenes (Jilin-1 0.5 m mosaic, GEOVIS Earth daily imagery). To cross-check two sources, fetch one place from both and mark the same points on each — the markers must land on the same building.
 - Tianditu also serves a **vector base** (`vec_w` roads under `cva_w` labels) and a **reverse-geocoding API**, both taking the same server key; `roadmap.py` and `revgeo.py` wrap them. Reach for them whenever a street has to be identified or a point has to be classified as street / building — imagery alone can be shadowed or ambiguous. CGCS2000 ≈ WGS84, no conversion.
+- **AMap also serves a 2D road map** (`webrd`, `style=8` with POI labels / `style=7` without): `amap_road.py` stitches it into a mosaic plus a `tiles.py`-compatible sidecar (`crs="gcj"`), so `tiles.py mark` draws candidate points and a view sector on it unchanged. Its labels carry names imagery cannot give (watchtower numbers, shop/bridge/hotel names) — annotate the conclusion on this base as well as on the satellite mosaic.
 - Local additions live outside the skill folder as wired copies (`~/.workbuddy/backups/geo-sleuth-wired`; `GEO_WIRED_BACKUP` overrides it). If a skill update overwrites the scripts, `models.py restore` puts back only the files that actually differ.
 - Cache goes to `.geo-cache/` in the current directory; the candidate board is `board.json` in the current directory. Script list and data sources: `references/data-sources.md`.
 - macOS has no `timeout` command; in zsh `$var` doesn't word-split, so use `bash -c` or `${=var}` in loops. A province-wide Overpass query can take several minutes; run it in the background.
