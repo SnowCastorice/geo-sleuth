@@ -172,3 +172,25 @@ wrong (a landmark sitting exactly at the frame edge, partially cropped, is the e
 the arc is cut off at the frame edge and the drawing looks like no cone at all. A z18 mosaic at
 `--tiles 2/--radius 2` covers only ≈±0.57 km, which cannot hold a 900 m sector — use z17 at
 `--radius 4` (≈±1.14 km) or shrink the sector radius to fit.
+
+### 9.2 Reading feature positions off the map, and solving the camera when things disagree
+
+- **Labels are not coordinates.** Map POI labels are placed for legibility: measured against an
+  authoritative POI they sit 40–200 m from the feature, and the same label moves again between zoom
+  levels. Read the coordinates of numbered features (watchtowers, gates, piers) **from the labels at
+  the highest zoom available**, verify one of them against an authoritative coordinate, and keep the
+  known spacing only as a sanity check — never as the source of the positions. Extrapolating a chain
+  of 120 m-spaced watchtowers from a low-zoom mosaic went wrong four times in one run.
+- **When the photo and the map disagree, the camera is the unknown.** Intersect two sight-lines to
+  landmarks you trust (`geo.py intersect`, or two `geo.py bearing` rays) and re-derive the position.
+  Do not keep the camera and move the landmarks, and do not invent a reason a landmark "cannot be
+  seen": **a feature the photo does not show is a hard constraint on the camera and the cone** — if
+  the geometry puts it inside the frame, the geometry is wrong, not the feature.
+- A camera solved this way in a real run: "building clipped at the left frame edge (−33.9°)" ×
+  "the prominent watchtower at +14.1°" → the position moved ~35 m west and, in one step, the
+  tower's numbering, the cone's extent and the visibility of every landmark became consistent.
+- Budget the uncertainty honestly: camera height, the exact spot on a wall/roof and a heading taken
+  from a low sun each carry ±30–50 m / ±3–5°, i.e. ±20–60 m on the ground at 100–400 m range — the
+  same order as the spacing of features such as watchtowers, which is why a wrong camera can look
+  self-consistent for several versions. Two landmarks about 40–50° apart in the frame pin it far
+  better than one.
