@@ -268,6 +268,8 @@ uv run scripts/pose.py check spec.json --cands cands.json
 - One more thing: few points isn't fatal (4 well-spread points still solve to a dozen or so meters); **what's fatal is all the points crowded in one bearing** — better to use fewer points and look for them on both sides.
 - When two candidates differ only on one point (`robust_by` is the same "drop X"), the geometry can't separate them; first go back and check X. If they still can't be separated, rely on the scene (is the foreground an open lawn, can you see water), and state in the conclusion that the scene decided it.
 
+**Only 2–3 anchors, or no elevations?** `pose.py` wants ≥4 points with heights. With a bare shoreline (a row of hotels, a promenade, a beach) you usually have 2–3 pixels and no heights — solve `lat, lon, heading` plus the pixel scale by grid search instead, and read `anchors.md` first: it covers how an anchor gets misidentified (§0), same-name POIs (§1), the bearing-only solve (§2), the collinearity that leaves a 11° fan with ±125 m along-sight error (§3) and the Monte-Carlo budget that must be run rather than guessed (§4).
+
 ## 11. Compute the view before excluding: out of frame, occluded or too small ≠ absent
 
 Before you use "X is not in the frame" to exclude a camera position or a whole direction, you must compute it first. Common mistakes: a landmark sits right at the frame edge, so you assume "that famous building next to it would be visible if it were there"; imagining how wide a video screenshot's frame is using the main camera's FOV; a distant tower is only a few pixels, and you say "not seen".
