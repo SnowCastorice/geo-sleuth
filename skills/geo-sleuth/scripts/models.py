@@ -216,9 +216,11 @@ def cmd_restore(args) -> int:
         "match.py": here / "match.py",
         "models.py": here / "models.py",
         # These do not feed the models, but they carry local additions (extra imagery sources, the
-        # conclusion-card builder) and can be lost to a skill update just as easily.
+        # conclusion-card builder, tzdata for Windows zone lookups) and can be lost to a skill
+        # update just as easily.
         "tiles.py": here / "tiles.py",
         "conclusion.py": here / "conclusion.py",
+        "sun.py": here / "sun.py",
         "SKILL.md": skill / "SKILL.md",
     }
     if not BACKUP_DIR.is_dir():
