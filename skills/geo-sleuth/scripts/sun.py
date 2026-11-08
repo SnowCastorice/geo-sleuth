@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["pillow"]
+# dependencies = ["pillow", "tzdata"]
 # ///
 """Sky geometry: sun position, shadows, satellite TV dishes.
 
